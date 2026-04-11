@@ -3,7 +3,7 @@ import random
 import re
 import time
 import string
-from urllib.parse import urlparse, urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from aiohttp_socks import ProxyConnector
 from playwright.async_api import async_playwright
@@ -72,6 +72,18 @@ class DoodStreamExtractor:
             return worker_fetch_url
         return target_url
 
+    def _unwrap_worker_target_url(self, response_url: str) -> str:
+        if not self.worker_url or not response_url:
+            return response_url
+
+        worker_base = self.worker_url.rstrip("/")
+        if not response_url.startswith(worker_base):
+            return response_url
+
+        parsed = urlparse(response_url)
+        target_values = parse_qs(parsed.query).get("url", [])
+        return target_values[0] if target_values else response_url
+
     def _build_fetch_headers(self, extra_headers: dict | None = None) -> dict:
         headers = {"User-Agent": self.base_headers["user-agent"]}
         if self.worker_url:
@@ -85,6 +97,7 @@ class DoodStreamExtractor:
     async def _fetch_player_data_via_browser(
         self, url: str
     ) -> tuple[str | None, str | None, str | None, str, str]:
+        browser_url = self._build_fetch_url(url)
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(
                 headless=True,
@@ -115,7 +128,7 @@ class DoodStreamExtractor:
 
             async def handle_response(response):
                 nonlocal pass_path, token, pass_body
-                response_url = response.url
+                response_url = self._unwrap_worker_target_url(response.url)
                 if "/pass_md5/" not in response_url:
                     return
                 if not pass_path:
@@ -136,10 +149,16 @@ class DoodStreamExtractor:
                         pass
 
             page.on("response", handle_response)
-            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            if self.worker_url:
+                logger.info(
+                    "DoodStream browser fallback using CF_WORKER_URL: worker=%s target=%s",
+                    self.worker_url,
+                    url,
+                )
+            await page.goto(browser_url, wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(12000)
             html = await page.content()
-            final_url = page.url
+            final_url = self._unwrap_worker_target_url(page.url) or url
             if not pass_path or not token:
                 html_pass_path, html_token = self._extract_pass_and_token(html)
                 pass_path = pass_path or html_pass_path
