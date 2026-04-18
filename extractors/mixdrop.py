@@ -1,5 +1,7 @@
 import logging
 import random
+import re
+import base64
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from aiohttp_socks import ProxyConnector
 from utils.packed import eval_solver
@@ -63,15 +65,69 @@ class MixdropExtractor:
             except Exception as e:
                 logger.error(f"Error resolving stayonline.pro wrapper: {e}")
 
+        # Handle safego.cc wrapper
+        if "safego.cc" in url:
+            try:
+                from bs4 import BeautifulSoup
+                try:
+                    import ddddocr
+                except ImportError:
+                    ddddocr = None
+                
+                logger.info(f"Step 1: Fetching safego.cc page: {url}")
+                async with session.get(url) as resp:
+                    text = await resp.text()
+                
+                soup = BeautifulSoup(text, "lxml")
+                img_tag = soup.find("img", src=re.compile(r'data:image/png;base64,'))
+                
+                if img_tag and ddddocr:
+                    img_data_b64 = img_tag["src"].split(",")[1]
+                    img_data = base64.b64decode(img_data_b64)
+                    
+                    ocr = ddddocr.DdddOcr(show_ad=False)
+                    res = ocr.classification(img_data)
+                    logger.info(f"Step 2: Solved safego.cc captcha: {res}")
+                    
+                    async with session.post(url, data={"captch5": res}, headers={"Referer": url}) as resp:
+                        text = await resp.text()
+                        soup = BeautifulSoup(text, "lxml")
+                else:
+                    if not ddddocr:
+                        logger.warning("ddddocr not installed, skipping captcha solve for safego.cc")
+                
+                # Look for "Proceed to video" link
+                proceed_link = soup.find("a", string=re.compile(r'Proceed to video', re.I))
+                if not proceed_link:
+                    # Try to find any link with Mixdrop in it
+                    proceed_link = soup.find("a", href=re.compile(r'mixdrop', re.I))
+                
+                if proceed_link:
+                    new_url = proceed_link["href"]
+                    if new_url.startswith("/"):
+                        from urllib.parse import urljoin
+                        new_url = urljoin(url, new_url)
+                    logger.info(f"Step 3: Resolved safego.cc wrapper: {url} -> {new_url}")
+                    url = new_url
+                    # normalization will happen after this block
+                else:
+                    logger.warning(f"Failed to find redirect link in safego.cc page.")
+            except Exception as e:
+                logger.error(f"Error resolving safego.cc wrapper: {e}")
+
         # Normalize URL and ensure it's an embed URL if possible
         # Mixdrop mirrors: .co, .to, .ps, .ch, .ag, .gl, .club, .net, .top, .nz
         if "/f/" in url:
             url = url.replace("/f/", "/e/")
+        if "/emb/" in url:
+            url = url.replace("/emb/", "/e/")
         
-        # Keep original domain if it's a known mirror, otherwise default to .ps
-        known_mirrors = ["mixdrop.co", "mixdrop.to", "mixdrop.ps", "mixdrop.ch", "mixdrop.ag", 
+        # Keep original domain if it's a known mirror, otherwise default to .to
+        # Note: mixdrop.vip and mixdrop.ps are removed from here to force normalization to .to
+        # because they often have bot protection (meta refresh) that eval_solver doesn't handle.
+        known_mirrors = ["mixdrop.co", "mixdrop.to", "mixdrop.ch", "mixdrop.ag", 
                          "mixdrop.gl", "mixdrop.club", "m1xdrop.net", "mixdrop.top", "mixdrop.nz",
-                         "mdy48tn97.com"]
+                         "mixdrop.vc", "mixdrop.sx", "mixdrop.bz", "mdy48tn97.com"]
         
         mirror_found = False
         for mirror in known_mirrors:
@@ -83,7 +139,7 @@ class MixdropExtractor:
             # Try to force a known good mirror
             parts = url.split("/")
             if len(parts) > 2:
-                parts[2] = "mixdrop.ps"
+                parts[2] = "mixdrop.to"
                 url = "/".join(parts)
 
         headers = {"accept-language": "en-US,en;q=0.5", "referer": url}
