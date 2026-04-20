@@ -132,9 +132,9 @@ TRANSPORT_ROUTES = parse_transport_routes()
 
 # Auto-add WARP to global proxies if enabled and none provided
 if ENABLE_WARP and not GLOBAL_PROXIES:
-    # Default WARP port in Full version is 10000
-    GLOBAL_PROXIES = ["socks5://127.0.0.1:10000"]
-    logging.info("🛡️ WARP enabled: added default WARP proxy to global list.")
+    # Default WARP port (standard SOCKS5 port used in this environment)
+    GLOBAL_PROXIES = ["socks5://127.0.0.1:1080"]
+    logging.info("🛡️ WARP enabled: added default WARP proxy (port 1080) to global list.")
 
 # Logging configurazione proxy
 if GLOBAL_PROXIES: logging.info(f"🌍 Loaded {len(GLOBAL_PROXIES)} global proxies.")
