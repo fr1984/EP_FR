@@ -1,0 +1,39 @@
+name: Sync Fork and Rebuild Space
+
+on:
+  schedule:
+    # Gira ogni lunedì alle 00:00 UTC
+    - cron: '0 0 * * 1'
+  workflow_dispatch: # Permette l'avvio manuale per testare subito
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add Upstream and Sync
+        run: |
+          # Configurazione Git
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          
+          # Aggiunta della repo originale (Upstream)
+          git remote add upstream https://github.com/realbestia1/EasyProxy.git
+          
+          # Recupero aggiornamenti
+          git fetch upstream
+          
+          # Passaggio al branch principale (main)
+          git checkout main
+          
+          # Unione dei cambiamenti (Fast-forward se possibile, altrimenti merge)
+          git merge upstream/main --ff-only || git merge upstream/main --no-edit
+          
+          # Push verso il tuo fork su GitHub
+          # Questo triggererà automaticamente il rebuild su Hugging Face
+          git push origin main
