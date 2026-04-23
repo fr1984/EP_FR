@@ -264,6 +264,7 @@ cat > "$PREFIX/bin/easyproxy-stop" << 'STOP_EOF'
 #!/data/data/com.termux/files/usr/bin/bash
 echo "🛑 Stopping EasyProxy..."
 proot-distro login ubuntu -- bash -c 'pkill -f flaresolverr; pkill -f byparr; pkill -f "aiohttp\|gunicorn\|app:app"; pkill Xvfb' 2>/dev/null
+screen -X -S easyproxy quit 2>/dev/null || true
 echo "✅ Stopped."
 STOP_EOF
 chmod +x "$PREFIX/bin/easyproxy-stop"
