@@ -124,10 +124,11 @@ class DeltabitExtractor:
         
         # 1. Handle redirectors (safego.cc, clicka.cc, etc.)
         if any(d in url.lower() for d in ["safego.cc", "clicka.cc", "clicka"]):
-            # I redirector usano WARP (bypass_warp_active è False di default o viene forzato nel metodo)
+            # I redirector usano WARP
             url = await self._solve_redirector(url)
         
-        # 2. Una volta su Deltabit, passiamo a warp=off (IP Reale) per coerenza tra estrazione e streaming
+        # 2. Una volta su Deltabit, passiamo a warp=off (IP Reale)
+        # Se l'URL risolto è già deltabit, la transizione deve essere pulita
         self.bypass_warp_active = True
         logger.debug(f"🔄 Switching to warp=off for Deltabit domain: {url}")
 
@@ -240,11 +241,18 @@ class DeltabitExtractor:
                     break
                 
                 logger.debug(f"Deltabit: Redirector step {step+1} at {current_url}")
-                # Forziamo SEMPRE warp=on (bypass_warp=False) per i redirector
+                # Forziamo WARP per il redirector
                 res = await self._request_flaresolverr("request.get", current_url, session_id=session_id, force_bypass_warp=False)
                 solution = res.get("solution", {})
+                new_url = solution.get("url", current_url)
+                
+                # Se il redirect ci ha portato su Deltabit, fermiamoci PRIMA di caricare la pagina con WARP
+                if "deltabit" in new_url.lower():
+                    logger.debug(f"Deltabit: Redirector landed on target domain, stopping WARP phase: {new_url}")
+                    return new_url
+
+                current_url = new_url
                 text = solution.get("response", "")
-                current_url = solution.get("url", current_url)
                 soup = BeautifulSoup(text, "lxml")
                 
                 # Loop specifico per il Captcha (fino a 5 tentativi per step)
@@ -353,14 +361,19 @@ class DeltabitExtractor:
                     pass
         
     def _build_result(self, video_url: str, referer: str, user_agent: str) -> dict:
-        headers = self.base_headers.copy()
-        headers["Referer"] = referer
-        headers["User-Agent"] = user_agent
-        headers["Origin"] = f"https://{urlparse(referer).netloc}"
+        # Pulizia totale degli header per evitare blocchi IP/Cloudflare
+        clean_headers = {
+            "User-Agent": user_agent,
+            "Referer": referer,
+            "Origin": f"https://{urlparse(referer).netloc}",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive"
+        }
         
         return {
             "destination_url": video_url,
-            "request_headers": headers,
+            "request_headers": clean_headers,
             "mediaflow_endpoint": self.mediaflow_endpoint,
             "bypass_warp": self.bypass_warp_active
         }
