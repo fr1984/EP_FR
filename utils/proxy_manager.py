@@ -97,7 +97,7 @@ class FreeProxyManager:
                 return list(self.proxies)
 
             good = []
-            semaphore = asyncio.Semaphore(25) # Concorrenza aumentata per check massivi
+            semaphore = asyncio.Semaphore(100) # Concorrenza massiccia per check istantanei
             
             tasks = [self._probe_proxy_worker(c, probe_func, semaphore, good) for c in candidates]
             await asyncio.gather(*tasks)

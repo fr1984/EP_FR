@@ -150,7 +150,7 @@ class DoodStreamExtractor:
                 resp = scraper.get(
                     embed_url,
                     headers={"User-Agent": _DOOD_UA},
-                    timeout=12,
+                    timeout=6,
                     proxies={"http": proxy_url, "https": proxy_url},
                 )
                 return resp.status_code == 200 and self._is_valid_dood_page(resp.text)

@@ -120,7 +120,7 @@ class VixSrcExtractor:
                 resp = scraper.get(
                     url,
                     headers=headers or self._default_headers(),
-                    timeout=12,
+                    timeout=6,
                     proxies={"http": proxy_url, "https": proxy_url},
                 )
                 return resp.status_code == 200 and len(resp.text) > 100
