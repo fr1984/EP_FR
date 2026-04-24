@@ -5,9 +5,7 @@ import time
 from urllib.parse import urlparse, urljoin
 
 import aiohttp
-from curl_cffi.requests import AsyncSession
-from camoufox.async_api import AsyncCamoufox
-
+import cloudscraper
 from config import BYPARR_URL, get_proxy_for_url, TRANSPORT_ROUTES, GLOBAL_PROXIES, get_solver_proxy_url
 from utils.cookie_cache import CookieCache
 
@@ -45,7 +43,7 @@ class DoodStreamExtractor:
     async def extract(self, url: str, **kwargs):
         """
         Main extraction entry point. 
-        Uses Camoufox to sniff the network traffic for pass_md5.
+        Uses ONLY cloudscraper as requested.
         """
         parsed = urlparse(url)
         video_id = parsed.path.rstrip("/").split("/")[-1]
@@ -53,83 +51,39 @@ class DoodStreamExtractor:
             raise ExtractorError("Invalid DoodStream URL: no video ID found")
 
         embed_url = url if "/e/" in url else f"https://{parsed.netloc}/e/{video_id}"
-        proxy = self._get_proxy(embed_url)
         
-        logger.info(f"🚀 DoodStream: Starting Network Sniffing for {embed_url}")
-        
-        captured_data = {"md5_url": None, "base_stream": None, "html": None}
-        
-        async with AsyncCamoufox(
-            headless=True,
-            geoip=True,
-            proxy={"server": proxy} if proxy else None,
-        ) as browser:
-            page = await browser.new_page()
+        # --- PHASE 1: cloudscraper (ONLY) ---
+        try:
+            logger.info(f"🚀 DoodStream: Trying cloudscraper extraction for {embed_url}")
+            scraper = cloudscraper.create_scraper()
+            # cloudscraper is synchronous, so we run it in a thread
+            r = await asyncio.to_thread(scraper.get, embed_url, headers={"User-Agent": _DOOD_UA}, timeout=30)
             
-            # 🔥 Event listener for network traffic (exactly like DrissionPage logic)
-            async def on_response(response):
-                if "pass_md5" in response.url:
-                    try:
-                        captured_data["md5_url"] = response.url
-                        captured_data["base_stream"] = (await response.text()).strip()
-                        logger.info(f"🔥 Captured MD5 Request: {response.url}")
-                    except Exception:
-                        pass
-
-            page.on("response", on_response)
+            if r.status_code == 200:
+                html = r.text
+                pass_match = re.search(r"(/pass_md5/[^'\"<>\s]+)", html)
+                token_match = re.search(r"token=([^&\s'\"]+)", html)
+                
+                if pass_match and token_match:
+                    pass_path = pass_match.group(1)
+                    token = token_match.group(1)
+                    pass_url = urljoin(embed_url, pass_path)
+                    
+                    logger.info(f"🔗 Cloudscraper found pass_md5 path: {pass_path}")
+                    
+                    resp = await asyncio.to_thread(scraper.get, pass_url, headers={"Referer": embed_url}, timeout=30)
+                    if resp.status_code == 200 and len(resp.text) > 10:
+                        base_stream = resp.text.strip()
+                        logger.info("✅ DoodStream: cloudscraper extraction successful!")
+                        return self._finalize_extraction(base_stream, html, embed_url, _DOOD_UA)
             
-            try:
-                # Navigate and wait for the page to be ready
-                await page.goto(embed_url, wait_until="networkidle", timeout=45000)
+                raise ExtractorError(f"DoodStream: cloudscraper failed with status {r.status_code}")
+            else:
+                raise ExtractorError(f"DoodStream: cloudscraper failed to fetch embed page (status {r.status_code})")
                 
-                # Check for Cloudflare Turnstile titles and wait if detected
-                title = await page.title()
-                if any(t in title for t in ["Just a moment...", "Ci siamo quasi...", "Verifica del browser"]):
-                    logger.info("🛡️ Cloudflare detected in browser, waiting for solve...")
-                    await page.wait_for_timeout(10000) # Wait for auto-solve
-                
-                # Wait up to 30 seconds for the pass_md5 request to appear
-                start_wait = time.time()
-                while not captured_data["base_stream"] and (time.time() - start_wait < 30):
-                    # Store content as we go to avoid NoneType later
-                    try:
-                        captured_data["html"] = await page.content()
-                    except:
-                        pass
-                    
-                    if captured_data["base_stream"]:
-                        break
-                        
-                    # Try to trigger play if possible (sometimes needed)
-                    try:
-                         await page.click("div.vjs-big-play-button", timeout=1000)
-                    except:
-                         pass
-                    await asyncio.sleep(1)
-                    
-            except Exception as e:
-                # If we have the data, ignore the error (e.g. timeout)
-                if captured_data["base_stream"]:
-                    logger.debug(f"Ignoring browser error as data was already captured: {e}")
-                else:
-                    logger.error(f"Browser extraction error: {e}")
-            finally:
-                if not captured_data["html"]:
-                    try:
-                        captured_data["html"] = await page.content()
-                    except:
-                        captured_data["html"] = ""
-                await page.close()
-
-        if not captured_data["base_stream"]:
-            raise ExtractorError("DoodStream: Network sniffing failed to capture pass_md5")
-
-        return self._finalize_extraction(
-            captured_data["base_stream"], 
-            captured_data["html"], 
-            embed_url, 
-            _DOOD_UA
-        )
+        except Exception as e:
+            logger.error(f"❌ DoodStream: cloudscraper error: {e}")
+            raise ExtractorError(f"DoodStream: cloudscraper extraction failed: {e}")
 
     def _finalize_extraction(self, base_stream: str, html: str, base_url: str, ua: str) -> dict:
         """Constructs the final URL from captured data."""
