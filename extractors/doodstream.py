@@ -61,8 +61,29 @@ class DoodStreamExtractor:
             
             if r.status_code == 200:
                 html = r.text
-                pass_match = re.search(r"(/pass_md5/[^'\"<>\s]+)", html)
+                
+                # Try to extract the page title to confirm we're on the real page
+                title_match = re.search(r"<title>(.*?)</title>", html, re.I)
+                if title_match:
+                    logger.info(f"🎬 DoodStream Page Title: {title_match.group(1)}")
+
+                # Check for Cloudflare/DDoS protection markers in the HTML
+                if "Just a moment..." in html or "DDoS protection" in html or "cf-browser-verification" in html:
+                    logger.warning("🛡️ DoodStream: cloudscraper returned 200 but Cloudflare challenge is present.")
+                
+                # Extract pass_md5 path and token
+                # Broad regex for pass_md5
+                pass_match = re.search(r"['\"](/pass_md5/[^'\"]+)['\"]", html)
+                if not pass_match:
+                    pass_match = re.search(r"(/pass_md5/[A-Za-z0-9-_.]+)", html)
+                
+                # Broad regex for token
                 token_match = re.search(r"token=([^&\s'\"]+)", html)
+                if not token_match:
+                    token_match = re.search(r"['\"]?token['\"]?\s*[:=]\s*['\"]([^'\"]+)['\"]", html)
+                if not token_match:
+                    # Look for the last string in the script which is often the token
+                    token_match = re.search(r"window\.[a-z0-9_]+\s*=\s*['\"]([^'\"]{20,})['\"]", html)
                 
                 if pass_match and token_match:
                     pass_path = pass_match.group(1)
@@ -76,8 +97,12 @@ class DoodStreamExtractor:
                         base_stream = resp.text.strip()
                         logger.info("✅ DoodStream: cloudscraper extraction successful!")
                         return self._finalize_extraction(base_stream, html, embed_url, _DOOD_UA)
+                    else:
+                        logger.warning(f"⚠️ DoodStream: pass_md5 request failed with status {resp.status_code} and content: {resp.text[:100]}")
             
-                raise ExtractorError(f"DoodStream: cloudscraper failed with status {r.status_code}")
+                # Log a snippet of the HTML for debugging if tokens not found
+                logger.debug(f"HTML Snippet (first 500 chars): {html[:500]}")
+                raise ExtractorError(f"DoodStream: tokens not found in HTML (status 200). CF protected? {'Yes' if 'cf-browser-verification' in html else 'No'}")
             else:
                 raise ExtractorError(f"DoodStream: cloudscraper failed to fetch embed page (status {r.status_code})")
                 
