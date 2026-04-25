@@ -1,73 +1,14 @@
-import logging
-import random
 import re
 from urllib.parse import urljoin, urlparse
-import asyncio
-from aiohttp import ClientSession, ClientTimeout, TCPConnector, ClientConnectionError
-from aiohttp_socks import ProxyConnector, ProxyError as AioProxyError
-from python_socks import ProxyError as PyProxyError
-
-from config import (
-    get_proxy_for_url, 
-    TRANSPORT_ROUTES, 
-    get_connector_for_proxy,
-    SELECTED_PROXY_CONTEXT,
-    GLOBAL_PROXIES
-)
+from extractors.base import BaseExtractor, ExtractorError
 from utils.packed import unpack
-from utils.proxy_manager import FreeProxyManager
 
-logger = logging.getLogger(__name__)
-
-
-class ExtractorError(Exception):
-    pass
-
-
-class StreamHGExtractor:
+class StreamHGExtractor(BaseExtractor):
     """Extractor for StreamHG-style players (dhcplay/vibuxer mirrors)."""
 
     def __init__(self, request_headers: dict, proxies: list = None):
-        self.request_headers = request_headers
-        self.base_headers = {
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        }
-        self.session = None
+        super().__init__(request_headers, proxies, extractor_name="streamhg")
         self.mediaflow_endpoint = "hls_proxy"
-        self.proxies = proxies or GLOBAL_PROXIES
-        self.last_used_proxy = None
-        self.proxy_manager = FreeProxyManager.get_instance(
-            "streamhg",
-            [
-                "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/all/data.txt",
-                "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text"
-            ]
-        )
-
-    def _get_random_proxy(self):
-        return random.choice(self.proxies) if self.proxies else None
-
-    async def _get_session(self, url: str = None):
-        if self.session is None or self.session.closed:
-            timeout = ClientTimeout(total=60, connect=30, sock_read=30)
-            proxy = get_proxy_for_url(url, TRANSPORT_ROUTES, self.proxies) if url else self._get_random_proxy()
-            if proxy:
-                connector = get_connector_for_proxy(proxy)
-            else:
-                connector = TCPConnector(
-                    limit=0,
-                    limit_per_host=0,
-                    keepalive_timeout=60,
-                    enable_cleanup_closed=True,
-                    force_close=False,
-                    use_dns_cache=True,
-                )
-            self.session = ClientSession(
-                timeout=timeout,
-                connector=connector,
-                headers={"User-Agent": self.base_headers["user-agent"]},
-            )
-        return self.session
 
     @staticmethod
     def _candidate_urls(url: str) -> list[str]:
@@ -81,50 +22,13 @@ class StreamHGExtractor:
             pass
         return candidates
 
-    async def _fetch_html(self, url: str, referer: str, retries: int = 2) -> tuple[str, str]:
+    async def _fetch_html(self, url: str, referer: str) -> tuple[str, str]:
         headers = {
             "Referer": referer,
-            "User-Agent": self.base_headers["user-agent"],
+            "User-Agent": self.base_headers["User-Agent"],
         }
-        
-        for attempt in range(retries):
-            try:
-                session = await self._get_session(url)
-                async with session.get(url, headers=headers, allow_redirects=True, timeout=ClientTimeout(total=20)) as response:
-                    if response.status != 200:
-                        raise ExtractorError(f"STREAMHG: HTTP {response.status} for {url}")
-                    return str(response.url), await response.text()
-            except (AioProxyError, PyProxyError, asyncio.TimeoutError, ClientConnectionError) as e:
-                is_proxy = isinstance(e, (AioProxyError, PyProxyError))
-                logger.warning(f"StreamHG: attempt {attempt+1} failed for {url} ({type(e).__name__}): {e}")
-                
-                # Reset session
-                if self.session and not self.session.closed:
-                    await self.session.close()
-                self.session = None
-                
-                if is_proxy and SELECTED_PROXY_CONTEXT.get():
-                    SELECTED_PROXY_CONTEXT.set(None)
-                
-                if attempt == 0:
-                    # Try free proxy fallback
-                    for proxy_url in await self.proxy_manager.get_proxies():
-                        try:
-                            connector = ProxyConnector.from_url(proxy_url)
-                            async with ClientSession(connector=connector, timeout=ClientTimeout(total=15)) as fallback_session:
-                                async with fallback_session.get(url, headers=headers, allow_redirects=True) as resp:
-                                    if resp.status == 200:
-                                        logger.info(f"StreamHG: successful fallback via {proxy_url}")
-                                        return str(resp.url), await resp.text()
-                        except Exception:
-                            continue
-                            
-                if attempt < retries - 1:
-                    await asyncio.sleep(1)
-                else:
-                    raise e
-        
-        raise ExtractorError(f"STREAMHG: Failed to fetch {url}")
+        resp = await self._make_request(url, headers=headers)
+        return resp.url, resp.text
 
     @staticmethod
     def _extract_hls_url(html: str, page_url: str) -> str | None:

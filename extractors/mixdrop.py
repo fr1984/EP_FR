@@ -27,40 +27,15 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-class ExtractorError(Exception):
-    pass
+from extractors.base import BaseExtractor, ExtractorError
 
-class MixdropExtractor:
+class MixdropExtractor(BaseExtractor):
     """Mixdrop URL extractor optimized with FlareSolverr sessions."""
 
     def __init__(self, request_headers: dict, proxies: list = None):
-        self.request_headers = request_headers
-        self.base_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        }
-        self.session = None
+        super().__init__(request_headers, proxies, extractor_name="mixdrop")
         self.mediaflow_endpoint = "proxy_stream_endpoint"
-        self.proxies = proxies or GLOBAL_PROXIES
         self.last_used_proxy = None
-        self.proxy_manager = FreeProxyManager.get_instance(
-            "mixdrop",
-            [
-                "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/all/data.txt",
-                "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text"
-            ]
-        )
-
-    async def _get_session(self, url: str = None):
-        if self.session is None or self.session.closed:
-            timeout = ClientTimeout(total=60, connect=30, sock_read=30)
-            proxy = get_proxy_for_url(url, TRANSPORT_ROUTES, self.proxies) if url else None
-            if proxy:
-                self.last_used_proxy = proxy
-                connector = get_connector_for_proxy(proxy)
-            else:
-                connector = TCPConnector(limit=0, use_dns_cache=True)
-            self.session = ClientSession(timeout=timeout, connector=connector, headers=self.base_headers)
-        return self.session
 
     def _build_session_for_proxy(self, proxy: str | None) -> ClientSession:
         timeout = ClientTimeout(total=60, connect=30, sock_read=30)
