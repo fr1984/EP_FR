@@ -177,8 +177,8 @@ class MixdropExtractor:
         if any(d in target_url.lower() for d in ["safego.cc", "clicka.cc", "clicka", "uprot.net"]):
             try:
                 free_proxies = await self.proxy_manager.get_proxies()
-                for i in range(0, min(len(free_proxies), 6), 3):
-                    batch = free_proxies[i:i+3]
+                for i in range(0, min(len(free_proxies), 15), 5):
+                    batch = free_proxies[i:i+5]
                     batch_tasks = [asyncio.create_task(try_path(p)) for p in batch]
                     for bt in asyncio.as_completed(batch_tasks):
                         res = await bt
